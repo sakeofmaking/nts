@@ -24,6 +24,13 @@ import adafruit_requests
 import json
 import adafruit_sht4x
 
+# Imports for display
+import displayio
+from displayio import I2CDisplay as I2CDisplayBus
+import terminalio
+from adafruit_display_text import label
+import adafruit_displayio_sh1107
+
 
 # Initialize Variables
 wifi_flag = False
@@ -42,6 +49,11 @@ requests = adafruit_requests.Session(pool, ssl.create_default_context())
 send_data = {
     'Temperature': str("Temperature goes here"),
 }
+
+# SH1107 is vertically oriented 64x128
+WIDTH = 128
+HEIGHT = 64
+BORDER = 2
 
 
 # Connect to Wifi
@@ -70,7 +82,6 @@ def ping_google_test():
 while not wifi_flag:  # connect to wifi
     wifi_flag = connect_to_wifi()
 
-
 # Configure SHT4x
 i2c = board.STEMMA_I2C()
 sht = adafruit_sht4x.SHT4x(i2c)
@@ -78,17 +89,38 @@ print("Found SHT4x with serial number", hex(sht.serial_number))
 sht.mode = adafruit_sht4x.Mode.NOHEAT_HIGHPRECISION
 print("Current mode is: ", adafruit_sht4x.Mode.string[sht.mode])
 
+# Configure Display
+font = terminalio.FONT
+displayio.release_displays()
+i2c = board.STEMMA_I2C()
+display_bus = I2CDisplayBus(i2c, device_address=0x3C)
+display = adafruit_displayio_sh1107.SH1107(display_bus, width=WIDTH, height=HEIGHT, rotation=0)
+
 
 # While Loop
 while True:
     try:
+        # Pull temp and hum and create labels
         temperature, relative_humidity = sht.measurements
-        print("Temperature: %0.1f C" % temperature)
-        print("Humidity: %0.1f %%" % relative_humidity)
-        print("")
-        time.sleep(1)
+        temp_display = f'Temp: {temperature:0.1f} C'
+        hum_display = f'Hum: {relative_humidity:0.1f} %'
+        temp_label = label.Label(font, text=temp_display)
+        hum_label = label.Label(font, text=hum_display)
 
-        # time.sleep(0.01)
+        # Set location on display
+        (_, _, width, _) = temp_label.bounding_box
+        temp_label.x = 0
+        temp_label.y = 5
+        (_, _, width, _) = hum_label.bounding_box
+        hum_label.x = 0
+        hum_label.y = 15
+
+        watch_group = displayio.Group()
+        watch_group.append(temp_label)
+        watch_group.append(hum_label)
+        display.root_group = watch_group
+
+        time.sleep(1)
     except Exception as e:
         print("Error:\n", str(e))
         print("Resetting microcontroller in 60 seconds")

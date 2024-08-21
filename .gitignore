@@ -1,3 +1,6 @@
 settings.toml
 README.md
 adafruit_sht4x.mpy
+adafruit_displayio_sh1107.mpy
+adafruit_bus_device
+adafruit_display_text
