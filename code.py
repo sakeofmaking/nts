@@ -23,6 +23,7 @@ import microcontroller
 import adafruit_requests
 import json
 import adafruit_sht4x
+import rotaryio
 
 # Imports for display
 import displayio
@@ -40,15 +41,20 @@ delay_count = 0
 delay_overflow = 60  # seconds
 button = digitalio.DigitalInOut(board.GP9)
 button.switch_to_input(pull=digitalio.Pull.UP)
-# button_enc = digitalio.DigitalInOut(board.GP9)
-# button_enc.switch_to_input(pull=digitalio.Pull.UP)
+button_enc = digitalio.DigitalInOut(board.GP21)
+button_enc.switch_to_input(pull=digitalio.Pull.UP)
+button_enc_state = None
+encoder = rotaryio.IncrementalEncoder(board.GP19, board.GP18)
+last_position = None  # encoder last position
 led = digitalio.DigitalInOut(board.GP10)
 led.direction = digitalio.Direction.OUTPUT
 pool = socketpool.SocketPool(wifi.radio)
 requests = adafruit_requests.Session(pool, ssl.create_default_context())
-send_data = {
-    'Temperature': str("Temperature goes here"),
-}
+upper_temp_thresh = upper_temp_thresh_new = 30  # C
+lower_temp_thresh = lower_temp_thresh_new = 10  # C
+upper_lower = True  # upper
+delay_count = 0
+delay_overflow = 600  # 10 min
 
 # SH1107 is vertically oriented 64x128
 WIDTH = 128
@@ -100,27 +106,76 @@ display = adafruit_displayio_sh1107.SH1107(display_bus, width=WIDTH, height=HEIG
 # While Loop
 while True:
     try:
+        scan_count += 1  # increment scan count
+
         # Pull temp and hum and create labels
         temperature, relative_humidity = sht.measurements
+        upper_temp_display = f'Upper Alert: {upper_temp_thresh_new:0.1f} C'
         temp_display = f'Temp: {temperature:0.1f} C'
-        hum_display = f'Hum: {relative_humidity:0.1f} %'
+        lower_temp_display = f'Lower Alert: {lower_temp_thresh_new:0.1f} C'
+        # hum_display = f'Hum: {relative_humidity:0.1f} %'
+
+        # Update Display
+        upper_temp_label = label.Label(font, text=upper_temp_display)
         temp_label = label.Label(font, text=temp_display)
-        hum_label = label.Label(font, text=hum_display)
+        lower_temp_label = label.Label(font, text=lower_temp_display)
+        # hum_label = label.Label(font, text=hum_display)
 
         # Set location on display
+        (_, _, width, _) = upper_temp_label.bounding_box
+        upper_temp_label.x = 0
+        upper_temp_label.y = 5
         (_, _, width, _) = temp_label.bounding_box
         temp_label.x = 0
-        temp_label.y = 5
-        (_, _, width, _) = hum_label.bounding_box
-        hum_label.x = 0
-        hum_label.y = 15
+        temp_label.y = 15
+        (_, _, width, _) = lower_temp_label.bounding_box
+        lower_temp_label.x = 0
+        lower_temp_label.y = 25
+        # (_, _, width, _) = hum_label.bounding_box
+        # hum_label.x = 0
+        # hum_label.y = 35
 
+        # Update the display
         watch_group = displayio.Group()
+        watch_group.append(upper_temp_label)
         watch_group.append(temp_label)
-        watch_group.append(hum_label)
+        watch_group.append(lower_temp_label)
+        # watch_group.append(hum_label)
         display.root_group = watch_group
 
-        time.sleep(1)
+        # Send data
+        if scan_count % 100 == 0:  # every second
+            if (temperature < lower_temp_thresh_new) or (temperature > upper_temp_thresh_new):  # threshold passed
+                if delay_count == 0:
+                    send_data = {'Temperature (C)': str(f'{temperature}'),}
+                    r = requests.post(os.getenv('WEBHOOK_ENDPOINT_URL'), data=json.dumps(send_data), headers={'Content-Type': 'application/json'})
+                    print('Message sent')
+                delay_count += 1
+                if delay_count >= delay_overflow:  # reset delay_count
+                    delay_count = 0
+
+        # Update encoder position
+        position = encoder.position
+        if last_position is None or position != last_position:
+            # Update temp threshold
+            if upper_lower:
+                upper_temp_thresh_new = upper_temp_thresh + position
+            else:
+                lower_temp_thresh_new = lower_temp_thresh + position
+        last_position = position
+
+        # Toggle Upper Lower Threshold Selection
+        if not button_enc.value and button_enc_state is None:
+            button_enc_state = "pressed"
+        if button_enc.value and button_enc_state == "pressed":
+            print('Button pressed')
+            upper_lower = not(upper_lower)
+            button_enc_state = None
+
+        if scan_count >= scan_overflow:  # reset scan_count
+            scan_count = 0
+
+        time.sleep(0.01)
     except Exception as e:
         print("Error:\n", str(e))
         print("Resetting microcontroller in 60 seconds")
