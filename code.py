@@ -52,6 +52,7 @@ lower_temp_thresh = 30  # F
 webhook_interval = 0
 FIVE_MIN_INTERVAL = 300
 alert_priority = True  # True triggers mobile notification
+temp_offset = -6.4  # To account for device heat
 
 # SH1107 is vertically oriented 64x128
 WIDTH = 128
@@ -126,7 +127,7 @@ while True:
 
         # Pull temp and hum and create labels
         temperature, relative_humidity = sht.measurements
-        temperature = ((9/5) * temperature) + 32  # convert C to F
+        temperature = ((9/5) * temperature) + 32 + temp_offset  # convert C to F
         temperature = round(temperature, 1)
         upper_temp_display = f'Upper Alert: {upper_temp_thresh:0.1f} F'
         temp_display = f'Temp: {temperature:0.1f} F'
