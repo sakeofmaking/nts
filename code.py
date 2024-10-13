@@ -66,10 +66,8 @@ def connect_to_wifi():
     try:
         wifi.radio.connect(os.getenv('CIRCUITPY_WIFI_SSID'), os.getenv('CIRCUITPY_WIFI_PASSWORD'))
         print('Connected to WiFi')
-        led.value = True
         return True
     except Exception as e:
-        led.value = False
         print(f'Failed to connect to Wifi: {e}')
         print('Waiting 5 seconds before trying again...')
         time.sleep(10)
@@ -163,7 +161,8 @@ while True:
         display.root_group = watch_group
 
         # Send data
-        if (temperature < lower_temp_thresh) or (temperature > upper_temp_thresh):  # threshold passed
+        if (temperature < lower_temp_thresh) or (temperature > upper_temp_thresh) or not button.value:  # threshold passed or button
+            led.value = True
             if current_time - last_time >= webhook_interval:  # check if interval has passed
                 try:  # try pinging google
                     ping_google_test()
@@ -186,6 +185,7 @@ while True:
         else:
             webhook_interval = 0
             alert_priority = True
+            led.value = False
 
         # Update encoder position
         position = encoder.position
@@ -203,7 +203,7 @@ while True:
                 lower_temp_thresh -= 1
         last_position = position
 
-        # Toggle Upper Lower Threshold Selection
+        # Toggle Upper Or Lower Threshold Selection
         if not button_enc.value and button_enc_state is None:
             button_enc_state = "pressed"
         if button_enc.value and button_enc_state == "pressed":
