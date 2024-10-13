@@ -2,10 +2,10 @@
 Temp Sensor
 
 Description:
-* On power up, LED confirms connected to network
 * On power up, OLED displays temperature actual
 * Rotary encoder is used to set thresholds
 * Rotary encoder button toggles between upper and lower threshold selection
+* Push button toggles between reporting modes
 * Temp is periodically (10 min) reported to Home Assistant
 """
 
