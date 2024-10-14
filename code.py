@@ -39,7 +39,7 @@ button = digitalio.DigitalInOut(board.GP9)
 button.switch_to_input(pull=digitalio.Pull.UP)
 button_enc = digitalio.DigitalInOut(board.GP21)
 button_enc.switch_to_input(pull=digitalio.Pull.UP)
-button_enc_state = None
+button_enc_prev = True
 encoder = rotaryio.IncrementalEncoder(board.GP19, board.GP18)
 last_position = None  # encoder last position
 led = digitalio.DigitalInOut(board.GP10)
@@ -76,10 +76,13 @@ def connect_to_wifi():
 
 # Pings Google
 def ping_google_test():
+    '''Send ping to Google's DNS server
+
+    No return value, but throws exception if ping failed'''
     ipv4 = ipaddress.ip_address('8.8.4.4')
     print("Ping google.com: %f ms" % (wifi.radio.ping(ipv4)*1000))
 
-
+### Consider replacing NVM with a JSON file so you can load a dictionary rather than a byte array
 # Read Data From NVM
 def read_data_from_nvm():
     stored_data = microcontroller.nvm[0:8]
@@ -94,16 +97,19 @@ def write_data_to_nvm(upper_data, lower_data):
     print(f'Wrote {upper_data} and {lower_data} to NVM')
 
 
+# Celcius to Farenheit
+def ctof(temperature):
+    temperature = ((9/5) * temperature) + 32 + temp_offset  # convert C to F
+    return round(temperature, 1)
+
 # Setup
 while not wifi_flag:  # connect to wifi
     wifi_flag = connect_to_wifi()
 last_time = time.monotonic()  # get the start time
 last_time2 = time.monotonic()  # get the start time
-upper_temp_thresh_read, lower_temp_thresh_read = read_data_from_nvm()
-upper_temp_thresh = upper_temp_thresh_read
-lower_temp_thresh = lower_temp_thresh_read
+upper_temp_thresh, lower_temp_thresh = read_data_from_nvm()
 
-# Configure SHT4x
+# Configure Temperature Sensor
 i2c = board.STEMMA_I2C()
 sht = adafruit_sht4x.SHT4x(i2c)
 print("Found SHT4x with serial number", hex(sht.serial_number))
@@ -117,6 +123,16 @@ i2c = board.STEMMA_I2C()
 display_bus = I2CDisplayBus(i2c, device_address=0x3C)
 display = adafruit_displayio_sh1107.SH1107(display_bus, width=WIDTH, height=HEIGHT, rotation=0)
 
+# Place the labels
+upper_temp_label = label.Label(font, text='80.0', x=0, y=5)
+temp_label = label.Label(font, text='70.0', x=0, y=15)
+lower_temp_label = label.Label(font, text='60.0', x=0, y=25)
+# hum_label = label.Label(font, text='50.0%', x=0, y=35)
+watch_group = displayio.Group()
+watch_group.append(upper_temp_label)
+watch_group.append(temp_label)
+watch_group.append(lower_temp_label)
+# watch_group.append(hum_label)
 
 # While Loop
 while True:
@@ -125,39 +141,11 @@ while True:
 
         # Pull temp and hum and create labels
         temperature, relative_humidity = sht.measurements
-        temperature = ((9/5) * temperature) + 32 + temp_offset  # convert C to F
-        temperature = round(temperature, 1)
-        upper_temp_display = f'Upper Alert: {upper_temp_thresh:0.1f} F'
-        temp_display = f'Temp: {temperature:0.1f} F'
-        lower_temp_display = f'Lower Alert: {lower_temp_thresh:0.1f} F'
-        # hum_display = f'Hum: {relative_humidity:0.1f} %'
-
-        # Update Display
-        upper_temp_label = label.Label(font, text=upper_temp_display)
-        temp_label = label.Label(font, text=temp_display)
-        lower_temp_label = label.Label(font, text=lower_temp_display)
-        # hum_label = label.Label(font, text=hum_display)
-
-        # Set location on display
-        (_, _, width, _) = upper_temp_label.bounding_box
-        upper_temp_label.x = 0
-        upper_temp_label.y = 5
-        (_, _, width, _) = temp_label.bounding_box
-        temp_label.x = 0
-        temp_label.y = 15
-        (_, _, width, _) = lower_temp_label.bounding_box
-        lower_temp_label.x = 0
-        lower_temp_label.y = 25
-        # (_, _, width, _) = hum_label.bounding_box
-        # hum_label.x = 0
-        # hum_label.y = 35
-
-        # Update the display
-        watch_group = displayio.Group()
-        watch_group.append(upper_temp_label)
-        watch_group.append(temp_label)
-        watch_group.append(lower_temp_label)
-        # watch_group.append(hum_label)
+        temperature = ctof(temperature)
+        upper_temp_label.text = f'Upper Alert: {upper_temp_thresh:0.1f} F'
+        temp_label.text = f'Temp: {temperature:0.1f} F'
+        lower_temp_label.text = f'Lower Alert: {lower_temp_thresh:0.1f} F'
+        # hum_label.text = f'Hum: {relative_humidity:0.1f} %'
         display.root_group = watch_group
 
         # Send data
@@ -178,10 +166,11 @@ while True:
                         'critical_alert': alert_priority,
                         }
                     r = requests.post(os.getenv('WEBHOOK_ENDPOINT_URL'), data=json.dumps(send_data), headers={'Content-Type': 'application/json'})
-                    print('Message sent')
+                    print(f'Message sent, got {r}')
+                    ### FIXME: Did it really post? What are the valid and invalid server responses?
                 last_time = current_time  # reset the timer
                 webhook_interval = 600  # 10 min
-                alert_priority = False
+                alert_priority = False  ### Why is this changed? We only send updates with critical alert priority
         else:
             webhook_interval = 0
             alert_priority = True
@@ -191,25 +180,23 @@ while True:
         position = encoder.position
         if last_position is None:
             last_position = position
-        if position != last_position:
-            # Update temp threshold
-            if upper_lower and (position > last_position):
+        elif position > last_position:
+            if upper_lower:
                 upper_temp_thresh += 1
-            elif upper_lower and (position < last_position):
-                upper_temp_thresh -= 1
-            elif not upper_lower and (position > last_position):
+            else:
                 lower_temp_thresh += 1
-            elif not upper_lower and (position < last_position):
+        elif position < last_position:
+            if upper_lower:
+                upper_temp_thresh -= 1
+            else:
                 lower_temp_thresh -= 1
         last_position = position
 
         # Toggle Upper Or Lower Threshold Selection
-        if not button_enc.value and button_enc_state is None:
-            button_enc_state = "pressed"
-        if button_enc.value and button_enc_state == "pressed":
-            print('Button pressed')
+        if button_enc.value and not button_enc_prev:
+            print('Button pressed') ###Actually button released, but less bounce this way?
             upper_lower = not(upper_lower)
-            button_enc_state = None
+        button_enc_prev = button_enc.value
         
         # Update Threshold Data In NVM
         if current_time - last_time2 >= FIVE_MIN_INTERVAL:  # check if interval has passed
